@@ -1,11 +1,76 @@
-const bcrypt = require("bcrypt");
-const passport = require('passport')
-const express = require("express");
-const myDB = require('./connection');
-const router = express.Router();
-const LocalStrategy = require('passport-local').Strategy;
-const GitHubStrategy = require('passport-github').Strategy;
+const passport = require('passport');
+const bcrypt = require('bcrypt');
 
+module.exports = function (app, myDataBase) {
+  app.route('/').get((req, res) => {
+    res.render('index', {
+      title: 'Connected to Database',
+      message: 'Please log in',
+      showLogin: true,
+      showRegistration: true,
+      showSocialAuth: true
+    });
+  });
+
+  app.route('/login').post(passport.authenticate('local', { failureRedirect: '/' }), (req, res) => {
+    res.redirect('/profile');
+  });
+
+  app.route('/profile').get(ensureAuthenticated, (req,res) => {
+    res.render('profile', { username: req.user.username });
+  });
+
+  app.route('/logout').get((req, res) => {
+    req.logout();
+    res.redirect('/');
+  });
+
+  app.route('/register').post((req, res, next) => {
+    const hash = bcrypt.hashSync(req.body.password, 12);
+    myDataBase.findOne({ username: req.body.username }, (err, user) => {
+      if (err) {
+        next(err);
+      } else if (user) {
+        res.redirect('/');
+      } else {
+        myDataBase.insertOne({
+          username: req.body.username,
+          password: hash
+        },
+          (err, doc) => {
+            if (err) {
+              res.redirect('/');
+            } else {
+              // The inserted document is held within
+              // the ops property of the doc
+              next(null, doc.ops[0]);
+            }
+          }
+        )
+      }
+    })
+  },
+    passport.authenticate('local', { failureRedirect: '/' }),
+    (req, res, next) => {
+      res.redirect('/profile');
+    }
+  );
+
+  app.route('/auth/github').get(passport.authenticate('github'));
+  app.route('/auth/github/callback').get(passport.authenticate('github', { failureRedirect: '/' }), (req, res) => {
+    req.session.user_id = req.user.id;
+    res.redirect("/chat");
+  })
+  app.route("/chat").get(ensureAuthenticated,(req,res)=>{
+    res.render('chat', { user: req.user  });
+  })
+
+  app.use((req, res, next) => {
+    res.status(404)
+      .type('text')
+      .send('Not Found');
+  });
+}
 
 function ensureAuthenticated(req, res, next) {
     if (req.isAuthenticated()) {
@@ -13,98 +78,3 @@ function ensureAuthenticated(req, res, next) {
     }
     res.redirect('/');
 };
-function setupRoutes(router,myDataBase) {
-router.get("/", async (req, res) => {
-    // Change the response to render the Pug template
-    try {
-        res.render('index', {
-            title: 'Connected to Database',
-            message: 'Please login',
-            showLogin: true,
-            showRegistration: true,
-            showSocialAuth: true
-        });
-    } catch (error) {
-        console.error(error)
-    }
-
-});
-router.post('/register', async (req, res, next) => {
-    try {
-        const hash = bcrypt.hashSync(req.body.password, 12);
-
-        const user = await myDataBase.findOne({ username: req.body.username });
-        if (user) {
-            return res.redirect('/');
-        }
-
-        const insertResult = await myDataBase.insertOne({
-            username: req.body.username,
-            password: hash
-        });
-
-        // Get the inserted document
-        const insertedDoc = insertResult.ops[0];
-
-        // Authenticate the user
-        passport.authenticate('local', (err, user, info) => {
-            if (err) {
-                return next(err);
-            }
-            if (!user) {
-                return res.redirect('/');
-            }
-            req.logIn(user, (err) => {
-                if (err) {
-                    return next(err);
-                }
-                return res.redirect('/profile');
-            });
-        })(req, res, next);
-    } catch (error) {
-        console.error(error);
-        res.redirect('/');
-    }
-});
-
-
-router.post('/login', passport.authenticate('local', { failureRedirect: '/' }), (req, res) => {
-    try {
-        console.log('User ' + req.body.username + ' attempted to log in.');
-        res.redirect('/profile'); // Redirect to the profile page
-    } catch (error) {
-        console.error(error)
-    }
-});
-router.get('/profile', ensureAuthenticated, (req, res) => {
-    try {
-        res.render('profile', { username: req.user.username });
-    } catch (error) {
-        console.error(error)
-    }
-
-});
-
-router.get("/logout", (req, res) => {
-    try {
-        req.logout();
-        res.redirect('/');
-    } catch (error) {
-        console.error(error)
-    }
-
-})
-router.get('/auth/github', passport.authenticate('github'));
-router.get('/auth/github/callback',passport.authenticate('github', { failureRedirect: '/cannot' }),
-  (req, res) => {
-    // GitHub authentication successful, redirect to profile
-    res.redirect('/profile');
-  }
-);
-
-router.get("/cannot",(req,res)=>{
-    res.send("cannot work")
-})
-}
-module.exports = setupRoutes;
-
